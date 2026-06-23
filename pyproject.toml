@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "poker44-model-v5"
+version = "0.1.0"
+description = "Poker44 model runtime package"
+requires-python = ">=3.10"
+dependencies = [
+  "joblib",
+  "numpy",
+  "scikit-learn",
+  "torch",
+]
+
+[tool.setuptools.packages.find]
+where = ["src", "."]
+include = ["poker44_model_base*", "poker44_ml*", "poker44*", "neurons*"]

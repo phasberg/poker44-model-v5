@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+.venv/
+dist/
+build/
+*.egg-info/
+
+artifacts/
+models/
+*.joblib
+*.pkl
+*.pickle
+
+.env
+.DS_Store
