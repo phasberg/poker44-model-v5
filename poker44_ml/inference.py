@@ -176,6 +176,56 @@ class Poker44Model:
             output.append(self._clamp01(1.0 / (1.0 + math.exp(-adjusted))))
         return output
 
+    def _apply_batch_safety_budget(self, scores: list[float]) -> list[float]:
+        config = self.metadata.get("batch_safety_budget")
+        if not scores or not isinstance(config, dict):
+            return [self._clamp01(value) for value in scores]
+        if config.get("kind") != "topk_v1":
+            return [self._clamp01(value) for value in scores]
+
+        count = len(scores)
+        try:
+            max_positive_count = int(config.get("max_positive_count", 1))
+            max_positive_fraction = float(config.get("max_positive_fraction", 0.0) or 0.0)
+            positive_floor = float(config.get("positive_floor", 0.501))
+            positive_ceiling = float(config.get("positive_ceiling", 0.509))
+            negative_ceiling = float(config.get("negative_ceiling", 0.49))
+        except (TypeError, ValueError):
+            return [self._clamp01(value) for value in scores]
+
+        if max_positive_fraction > 0.0:
+            max_positive_count = min(
+                max_positive_count,
+                max(1, int(math.floor(count * max_positive_fraction))),
+            )
+        max_positive_count = max(0, min(count, max_positive_count))
+        positive_floor = self._clamp01(positive_floor)
+        positive_ceiling = self._clamp01(max(positive_floor, positive_ceiling))
+        negative_ceiling = min(self._clamp01(negative_ceiling), positive_floor - 1e-6)
+
+        indexed_scores = [(index, self._clamp01(value)) for index, value in enumerate(scores)]
+        ranked = sorted(indexed_scores, key=lambda item: item[1], reverse=True)
+        output = [0.0 for _ in scores]
+
+        positives = ranked[:max_positive_count]
+        negatives = ranked[max_positive_count:]
+        if positives:
+            denom = max(1, len(positives) - 1)
+            for rank, (index, _score) in enumerate(positives):
+                relative = 1.0 - (rank / denom if denom else 0.0)
+                output[index] = positive_floor + relative * (positive_ceiling - positive_floor)
+
+        if negatives:
+            negative_values = [score for _index, score in negatives]
+            min_score = min(negative_values)
+            max_score = max(negative_values)
+            span = max(max_score - min_score, 1e-9)
+            for index, score in negatives:
+                relative = (score - min_score) / span
+                output[index] = max(0.0, min(negative_ceiling, relative * negative_ceiling))
+
+        return [round(self._clamp01(value), 6) for value in output]
+
     def predict_chunk_scores(self, chunks: list[list[dict[str, Any]]]) -> list[float]:
         if not chunks:
             return []
@@ -184,7 +234,8 @@ class Poker44Model:
         calibrated_scores = self._apply_calibrator(raw_scores)
         remapped_scores = self._apply_score_remap(calibrated_scores)
         logit_scores = self._apply_score_logit(remapped_scores)
-        return [round(self._clamp01(value), 6) for value in logit_scores]
+        budgeted_scores = self._apply_batch_safety_budget(logit_scores)
+        return [round(self._clamp01(value), 6) for value in budgeted_scores]
 
     def predict_chunk_score(self, chunk: list[dict[str, Any]]) -> float:
         scores = self.predict_chunk_scores([chunk])
@@ -205,10 +256,11 @@ class Poker44Model:
         calibrated_scores = self._apply_calibrator(raw_scores)
         remapped_scores = self._apply_score_remap(calibrated_scores)
         logit_scores = self._apply_score_logit(remapped_scores)
+        budgeted_scores = self._apply_batch_safety_budget(logit_scores)
         return {
             "raw_scores": self._round_score_log_values(raw_scores),
             "remapped_scores": self._round_score_log_values(remapped_scores),
-            "final_scores": self._round_score_log_values(logit_scores),
+            "final_scores": self._round_score_log_values(budgeted_scores),
         }
 
     def benchmark_latency(

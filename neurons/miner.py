@@ -31,19 +31,6 @@ IMPLEMENTATION_FILES = (
 )
 
 
-def conservative_human_safe_scores(scores: list[float]) -> list[float]:
-    """Preserve score ordering while avoiding hard-threshold human false positives."""
-    safe_scores: list[float] = []
-    for value in scores:
-        try:
-            score = float(value)
-        except Exception:
-            score = 0.0
-        score = max(0.0, min(1.0, score))
-        safe_scores.append(min(0.49, score * 0.49))
-    return safe_scores
-
-
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
@@ -112,9 +99,7 @@ class MinerModel:
         if not chunks:
             return []
         if hasattr(self.model, "predict_chunk_scores"):
-            return conservative_human_safe_scores(
-                [float(value) for value in self.model.predict_chunk_scores(chunks)]
-            )
+            return [float(value) for value in self.model.predict_chunk_scores(chunks)]
         raise TypeError("Loaded model does not expose a supported prediction interface.")
 
     def predict_chunk_score(self, chunk: list[dict[str, Any]]) -> float:
